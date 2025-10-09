@@ -22,6 +22,7 @@ from rich.logging import RichHandler
 import pandas as pd
 import numpy as np
 
+import logging
 import logging.config
 import shutil
 import sys
@@ -48,7 +49,8 @@ def run(env, controller, output_folder, simulation_name):
     last_ts_in_schedule = observations['last_ts_in_schedule']
     controller.user_requirements = (0.4, 0.3, 0.3)
     increase = 1
-    for _ in range(1000000):
+    logger = logging.getLogger('main')
+    for cycle_idx in range(1, 1_000_001):
         if increase:
             if sf_size < env.max_slotframe_size - 2:
                 action = 0
@@ -73,9 +75,18 @@ def run(env, controller, output_folder, simulation_name):
         # Add row to DataFrame
         new_cycle = pd.DataFrame([info])
         df = pd.concat([df, new_cycle], axis=0, ignore_index=True)
+        logger.info(
+            "Cycle %d | sf_len=%d | reward=%.3f | power=%.3f | delay=%.3f | pdr=%.3f",
+            cycle_idx,
+            sf_size,
+            info.get('reward', float('nan')),
+            info.get('power_normalized', float('nan')),
+            info.get('delay_normalized', float('nan')),
+            info.get('pdr_mean', float('nan'))
+        )
         if truncated:
             # if info['TimeLimit.truncated'] == True:
-            print('Number of max episodes reached')
+            logger.info('Number of max episodes reached at cycle %d', cycle_idx)
             break
     df.to_csv(output_folder+simulation_name+'.csv')
     # env.render()
@@ -173,14 +184,14 @@ def main():
             output_folder+controller.simulation_name+'.csv', output_folder)
 
     # Delete folders
-    try:
-        shutil.rmtree(output_folder)
-    except OSError as e:
-        print("Error: %s - %s." % (e.filename, e.strerror))
-    try:
-        shutil.rmtree(log_dir)
-    except OSError as e:
-        print("Error: %s - %s." % (e.filename, e.strerror))
+    # try:
+    #     shutil.rmtree(output_folder)
+    # except OSError as e:
+    #     print("Error: %s - %s." % (e.filename, e.strerror))
+    # try:
+    #     shutil.rmtree(log_dir)
+    # except OSError as e:
+    #     print("Error: %s - %s." % (e.filename, e.strerror))
 
 
 if __name__ == '__main__':

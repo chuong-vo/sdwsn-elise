@@ -27,26 +27,40 @@ import os
 
 
 CONFIG_FILE = "long_run.json"
-TRAINED_MODEL = "./trained_model/best_model.zip"
+TRAINED_MODEL = "/home/chuongvo/elise-ws/SDWSN-controller/tutorials/reinforcement-learning/training/trained_model/best_model.zip"
 
 
-def run(env, model_path, controller, output_folder, simulation_name):
+def run(env, model_path, controller, output_folder, simulation_name, reset_every: int = 0):
     # Load model
     model = PPO.load(model_path)
     # Pandas df to store results at each iteration
     df = pd.DataFrame()
     # Reset environment
     obs, _ = env.reset()
-    for _ in range(1000000):
+    logger = logging.getLogger('main')
+    for cycle_idx in range(1, 1_000_001):
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, truncated, info = env.step(action)
         # Add row to DataFrame
         new_cycle = pd.DataFrame([info])
         df = pd.concat([df, new_cycle], axis=0, ignore_index=True)
-        if truncated:
-            # if info['TimeLimit.truncated'] == True:
-            print('Number of max episodes reached')
-            break
+        logger.info(
+            "Cycle %d | sf_len=%s | reward=%.3f | power=%.3f | delay=%.3f | pdr=%.3f",
+            cycle_idx,
+            info.get('current_sf_len'),
+            info.get('reward', float('nan')),
+            info.get('power_normalized', float('nan')),
+            info.get('delay_normalized', float('nan')),
+            info.get('pdr_mean', float('nan'))
+        )
+        # Handle episode termination or time-limit/stall gracefully
+        if done or truncated:
+            logger.info(
+                'Episode ended (%s) at cycle %d — resetting environment',
+                'truncated' if truncated else 'done', cycle_idx
+            )
+            obs, _ = env.reset()
+            continue
     df.to_csv(output_folder+simulation_name+'.csv')
     # env.render()
     # env.close()
@@ -89,19 +103,13 @@ def main():
     # ----------------- Environment ----------------------------
     env = controller.reinforcement_learning.env
     # --------------------Start RL --------------------------------
-    run(env, TRAINED_MODEL, controller, output_folder, controller.simulation_name)
+    run(env, TRAINED_MODEL, controller, output_folder,
+        controller.simulation_name)
 
     controller.stop()
 
-    # Delete folders
-    try:
-        shutil.rmtree(output_folder)
-    except OSError as e:
-        print("Error: %s - %s." % (e.filename, e.strerror))
-    try:
-        shutil.rmtree(log_dir)
-    except OSError as e:
-        print("Error: %s - %s." % (e.filename, e.strerror))
+    # Keep output and logs for post-run analysis
+    # (Remove these lines if you prefer automatic cleanup.)
 
 
 if __name__ == '__main__':

@@ -16,6 +16,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import sys
+import csv
+import time
+
+import torch
+import gymnasium as gym
 
 
 from sdwsn_controller.config import SDWSNControllerConfig, CONTROLLERS
@@ -31,22 +36,85 @@ from stable_baselines3 import PPO
 CONFIG_FILE = "numerical_controller_rl.json"
 
 
+class MetricsLoggerEnv(gym.Wrapper):
+    """Wrap environment to log info metrics into a CSV file."""
+
+    def __init__(self, env, csv_path, phase):
+        super().__init__(env)
+        self.csv_path = csv_path
+        self.phase = phase
+        self.step_idx = 0
+        fieldnames = [
+            "timestamp", "phase", "step",
+            "alpha", "beta", "delta",
+            "reward", "power_normalized", "delay_normalized",
+            "pdr_mean", "current_sf_len", "last_ts_in_schedule"
+        ]
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        self._log_file = open(csv_path, 'a', newline='')
+        self._writer = csv.DictWriter(self._log_file, fieldnames=fieldnames)
+        if self._log_file.tell() == 0:
+            self._writer.writeheader()
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        self.step_idx += 1
+        controller = getattr(self.env.unwrapped, 'controller', None)
+        row = {
+            "timestamp": time.time(),
+            "phase": self.phase,
+            "step": self.step_idx,
+            "alpha": getattr(controller, 'alpha', None),
+            "beta": getattr(controller, 'beta', None),
+            "delta": getattr(controller, 'delta', None),
+            "reward": info.get('reward'),
+            "power_normalized": info.get('power_normalized'),
+            "delay_normalized": info.get('delay_normalized'),
+            "pdr_mean": info.get('pdr_mean'),
+            "current_sf_len": info.get('current_sf_len'),
+            "last_ts_in_schedule": info.get('last_ts_in_schedule')
+        }
+        self._writer.writerow(row)
+        self._log_file.flush()
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
+
+    def close(self):
+        try:
+            self._log_file.close()
+        finally:
+            super().close()
+
+
 def train(env, log_dir, callback):
     """
     Just use the PPO algorithm.
     """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Training PPO on device: {device}")
     model = PPO("MlpPolicy", env,
-                tensorboard_log=log_dir, verbose=1)
+                tensorboard_log=log_dir, verbose=1,
+                seed=123,
+                device=device)
 
-    model.learn(total_timesteps=int(50e4),
+    model.learn(total_timesteps=int(5e6),
                 tb_log_name='training', callback=callback)
     # Let's save the model
-    path = "".join([log_dir, "ppo_sdwsn"])
-    model.save(path)
+    base_path = os.path.join(log_dir, "ppo_sdwsn")
+    model.save(base_path)
 
     del model  # remove to demonstrate saving and loading
 
-    return path
+    best_model_path = None
+    callback_path = getattr(callback, 'save_path', None)
+    if callback_path:
+        candidate = callback_path + ".zip"
+        if os.path.exists(candidate):
+            best_model_path = candidate
+
+    return base_path + ".zip", best_model_path
 
 
 def evaluation(env, model_path):
@@ -80,7 +148,12 @@ def evaluation(env, model_path):
                 print("Unknow user requirements.")
         while (not done):
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, _ = env.step(action)
+            step_result = env.step(action)
+            if len(step_result) == 5:
+                obs, reward, terminated, truncated, _ = step_result
+                done = terminated or truncated
+            else:
+                obs, reward, done, _ = step_result
             # Get last observations non normalized
             observations = env.controller.get_state()
             acc_reward += reward
@@ -113,20 +186,33 @@ def main():
     # Monitor the environment
     monitor_log_dir = './trained_model/'
     os.makedirs(monitor_log_dir, exist_ok=True)
+    # Metrics logging
+    metrics_dir = './metrics/'
+    os.makedirs(metrics_dir, exist_ok=True)
+    train_metrics_file = os.path.join(metrics_dir, 'train_metrics.csv')
+    eval_metrics_file = os.path.join(metrics_dir, 'eval_metrics.csv')
+    for metrics_file in (train_metrics_file, eval_metrics_file):
+        if os.path.exists(metrics_file):
+            os.remove(metrics_file)
     # -------------------- setup controller ---------------------
     config = SDWSNControllerConfig.from_json_file(CONFIG_FILE)
     controller_class = CONTROLLERS[config.controller_type]
     controller = controller_class(config)
     # ----------------- RL environment ----------------------------
     train_env = controller.reinforcement_learning.env
+    train_env = MetricsLoggerEnv(train_env, train_metrics_file, phase='train')
     train_env = Monitor(train_env, monitor_log_dir)
     # Train the agent
     best_model = SaveOnBestTrainingRewardCallback(
         check_freq=1000, log_dir=monitor_log_dir)
-    model_path = train(train_env, log_dir, callback=best_model)
+    model_path, best_model_path = train(train_env, log_dir, callback=best_model)
+    train_env.close()
     # ----------------- Test environment ----------------------------
     test_env = controller.reinforcement_learning.env
-    evaluation(test_env, model_path)
+    test_env = MetricsLoggerEnv(test_env, eval_metrics_file, phase='eval')
+    evaluation_path = best_model_path if best_model_path else model_path
+    evaluation(test_env, evaluation_path)
+    test_env.close()
     controller.stop()
     # Delete folders
     # try:

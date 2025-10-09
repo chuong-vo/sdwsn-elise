@@ -66,6 +66,11 @@ class DelaySamples():
         for sample in self.samples.values():
             # if sample.cycle_seq == cycle_seq:
             last_samples.append(sample.delay)
+        if not last_samples:
+            logger.debug(
+                f'Node {self.node.id}: no delay samples available, returning 0'
+            )
+            return 0
         return sum(last_samples) / len(last_samples)
 
     def add_sample(self, seq, delay) -> Delay:

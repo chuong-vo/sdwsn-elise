@@ -63,7 +63,14 @@ class EnergySamples():
         return self.samples.get(seq)
 
     def get_sample_last(self):
-        return self.get_sample(self.last_seq).energy
+        sample = self.get_sample(self.last_seq)
+        if sample is None:
+            logger.debug(
+                f'Node {self.node.id}: energy sample for seq {self.last_seq} '
+                'not available, returning 0'
+            )
+            return 0
+        return sample.energy
 
     def add_sample(self, seq, energy) -> Energy:
         if self.get_sample(seq):

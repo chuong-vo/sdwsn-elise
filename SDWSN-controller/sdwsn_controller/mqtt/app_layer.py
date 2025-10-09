@@ -18,6 +18,7 @@ from sdwsn_controller.mqtt.mqtt import MQTTClient
 
 import logging
 import json
+import random
 
 
 logger = logging.getLogger(f'main.{__name__}')
@@ -46,6 +47,8 @@ class AppLayer(MQTTClient):
     ):
         self.name = "MQTT based application layer"
         self.controller = controller
+        self._cycle_counter = 0
+        self._last_profile = None
         super().__init__(config)
 
     def initialize(self):
@@ -111,6 +114,9 @@ class AppLayer(MQTTClient):
         # logger.debug('Published message on MQTT topic:')
         # logger.debug(f'Topic: {RL}')
         # logger.debug(f'Message: {message}')
+        self._cycle_counter += 1
+        if self._cycle_counter % 300 == 0:
+            self._publish_user_requirements_update()
 
     def send_latency(self, id, seq, delay):
         # message = json.dumps({'id': id,
@@ -131,3 +137,26 @@ class AppLayer(MQTTClient):
         # logger.debug(f'Topic: {PDR}')
         # logger.debug(f'Message: {message}')
         pass
+
+    def _publish_user_requirements_update(self):
+        """Publish a new user requirement profile on MQTT every N cycles."""
+        profiles = [
+            {"alpha": 0.4, "beta": 0.3, "delta": 0.3},
+            {"alpha": 0.8, "beta": 0.1, "delta": 0.1},
+            {"alpha": 0.1, "beta": 0.8, "delta": 0.1},
+            {"alpha": 0.1, "beta": 0.1, "delta": 0.8},
+        ]
+        next_profile = random.choice(profiles)
+        if self._last_profile and next_profile == self._last_profile:
+            # try to pick a different profile to avoid repetitive updates
+            alternatives = [p for p in profiles if p != self._last_profile]
+            if alternatives:
+                next_profile = random.choice(alternatives)
+        self._last_profile = next_profile
+        payload = json.dumps(next_profile)
+        logger.info(
+            "Publishing automatic user requirement update after %d cycles: %s",
+            self._cycle_counter,
+            payload
+        )
+        self.mqtt.publish(USER_REQ_SET, payload)

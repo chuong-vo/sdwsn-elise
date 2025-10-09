@@ -22,7 +22,7 @@
         "image": "contiker/contiki-ng",
         "script_folder": "examples/elise",
         "target": "/home/user/contiki-ng",
-        "contiki": "/Users/ffjla/contiki-ng",
+        "contiki": "/home/chuongvo/elise-ws/contiki-ng",
         "simulation_script": "cooja-orchestra.csc",
         "privileged": "true",
         "detach": "true",

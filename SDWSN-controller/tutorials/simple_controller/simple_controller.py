@@ -54,7 +54,7 @@ def main():
     logger.setLevel(logging.DEBUG)
 
     stream_handler = RichHandler(rich_tracebacks=True)
-    stream_handler.setLevel(logging.INFO)
+    stream_handler.setLevel(logging.DEBUG)
     stream_handler.setFormatter(formatter)
 
     logFilePath = "my.log"

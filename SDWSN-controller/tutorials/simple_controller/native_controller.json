@@ -3,7 +3,7 @@
     "controller_type": "native controller",
     "network": {
         "name": "Cooja",
-        "processing_window": 3000
+        "processing_window": 300
     },
     "sink_comm": {
         "name": "socket",

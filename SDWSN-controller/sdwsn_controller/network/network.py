@@ -346,20 +346,39 @@ class Network:
         """Wait for the current cycle to finish."""
         if self.processing_window is not None:
             logger.info("Starting new cycle")
-            result = -1
+            result = False
 
             with Progress(transient=True) as progress:
                 task = progress.add_task(
-                    "[red]Waiting for the current cycle to finish...", total=self.processing_window)
+                    "[red]Waiting for the current cycle to finish...",
+                    total=self.processing_window
+                )
 
-                while not progress.finished:
+                stall_timeout = 10.0
+                last_sequence = self.packet_dissector.sequence or 0
+                last_progress_time = time.monotonic()
+
+                while True:
+                    current_sequence = self.packet_dissector.sequence or 0
                     progress.update(
-                        task, completed=self.packet_dissector.sequence)
-                    if self.packet_dissector.sequence >= self.processing_window:
-                        result = 1
-                        progress.update(task, completed=100)
+                        task,
+                        completed=min(current_sequence, self.processing_window)
+                    )
+                    if current_sequence >= self.processing_window:
+                        result = True
+                        progress.update(task, completed=self.processing_window)
+                        break
+                    if current_sequence > last_sequence:
+                        last_sequence = current_sequence
+                        last_progress_time = time.monotonic()
+                    elif time.monotonic() - last_progress_time > stall_timeout:
+                        logger.warning(
+                            "Processing window stalled for %.1fs (sequence=%d)",
+                            time.monotonic() - last_progress_time,
+                            current_sequence
+                        )
+                        break
                     time.sleep(0.1)
-
             logger.info(f"Cycle finished, result: {result}")
             return result
         else:

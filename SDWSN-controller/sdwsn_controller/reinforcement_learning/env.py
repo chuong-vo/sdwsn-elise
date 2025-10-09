@@ -20,8 +20,8 @@ environment """
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-import random
-from random import randrange
+import time
+import logging
 
 from sdwsn_controller.common import common
 
@@ -46,6 +46,7 @@ class Env(gym.Env):
         # assert isinstance(simulation_name, str)
         # assert isinstance(folder, str)
         self.controller = controller
+        self.logger = logging.getLogger('main.env')
 
         assert isinstance(max_slotframe_size, int)
         self.max_slotframe_size = max_slotframe_size
@@ -79,9 +80,31 @@ class Env(gym.Env):
         # Send the entire TSCH schedule
         self.controller.send_tsch_schedules()
         # We now wait until we reach the processing_window
+        attempts = 0
+        MAX_ATTEMPTS = 250
         while (not self.controller.wait()):
-            print("resending schedules")
+            attempts += 1
             self.controller.send_tsch_schedules()
+            if attempts % 10 == 0:
+                seq = getattr(self.controller.packet_dissector, 'sequence', None)
+                if seq is not None:
+                    self.logger.info(
+                        "Waiting for processing window: attempt %d, current sequence=%d",
+                        attempts, seq
+                    )
+                else:
+                    self.logger.info(
+                        "Waiting for processing window: attempt %d",
+                        attempts
+                    )
+            if attempts >= MAX_ATTEMPTS:
+                self.logger.warning(
+                    "Processing window wait exceeded %d attempts, truncating episode",
+                    MAX_ATTEMPTS
+                )
+                observation, info = self._get_obs()
+                return observation, 0.0, False, True, info
+            time.sleep(0.1)
         observation, info = self._get_obs()
         done = False
         reward = info['reward']
@@ -144,7 +167,13 @@ class Env(gym.Env):
         delay = (0.1, 0.8, 0.1)
         reliability = (0.1, 0.1, 0.8)
         user_req = [balanced, energy, delay, reliability]
-        select_user_req = random.choice(user_req)
+        select_user_req = self.np_random.choice(user_req)
+        print(
+            "[Env reset] user requirements selected:",
+            f"alpha={select_user_req[0]:.2f},",
+            f"beta={select_user_req[1]:.2f},",
+            f"delta={select_user_req[2]:.2f}"
+        )
         self.controller.user_requirements = select_user_req
         # Send the entire routes
         self.controller.send_routes()
@@ -154,12 +183,12 @@ class Env(gym.Env):
         self.controller.wait()
         # We now save all the observations
         # This is done for the numerical environment.
-        self.controller.last_tsch_link = randrange(9+1, 20)
+        self.controller.last_tsch_link = int(self.np_random.integers(10, 20))
         # Get last active ts
         last_ts_in_schedule = self.controller.last_tsch_link
         # Set a random initial slotframe size
-        slotframe_size = random.randint(
-            last_ts_in_schedule+5, self.max_slotframe_size-5)
+        slotframe_size = int(self.np_random.integers(
+            last_ts_in_schedule + 5, self.max_slotframe_size - 5 + 1))
         # slotframe_size = last_ts_in_schedule
         self.controller.current_slotframe_size = slotframe_size
         # We now save the user requirements
